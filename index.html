@@ -77,6 +77,12 @@ dt{color:var(--muted)} dd{margin:0;overflow-wrap:anywhere;font-variant-numeric:t
 .actions{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;width:100%}
 .btn{font:inherit;font-weight:700;padding:11px 18px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--fg);cursor:pointer;text-decoration:none}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.field{display:flex;flex-direction:column;gap:6px;width:100%;text-align:left}
+.field label{font-weight:700;font-size:.9rem}
+.field input,.field select{font:inherit;padding:11px 12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--fg);width:100%}
+.field input:focus-visible,.field select:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.err{font-size:.82rem;color:#b3261e;margin:0;min-height:1em}
+.toggle.remove{color:#b3261e}
 .toast{font-size:.85rem;color:var(--accent-ink);min-height:1.2em;margin:0}
 @media (prefers-reduced-motion:no-preference){.sheet{animation:up .18s ease-out}@keyframes up{from{transform:translateY(12px);opacity:.6}to{transform:none;opacity:1}}}
 </style>
@@ -102,6 +108,7 @@ dt{color:var(--muted)} dd{margin:0;overflow-wrap:anywhere;font-variant-numeric:t
       <h1>Resi Wallet</h1>
       <p class="count" id="count"></p>
     </div>
+    <button class="manage" id="add" type="button">+ Add</button>
     <button class="manage" id="manage" type="button" aria-pressed="false">Manage</button>
   </header>
   <p class="banner" id="banner" hidden>Tap Hide to take a document out of your wallet. Hidden documents move to the bottom, and you can bring them back any time. Your files stay in Dropbox. Hidden choices are saved on this phone.</p>
@@ -111,6 +118,17 @@ dt{color:var(--muted)} dd{margin:0;overflow-wrap:anywhere;font-variant-numeric:t
   </div>
   <div class="list" id="list"></div>
   <p class="note" id="note">Tap a QR code to make it big for scanning. Each code opens a view-only Dropbox link.</p>
+</div>
+
+<div class="sheet" id="addsheet" hidden role="dialog" aria-modal="true" aria-labelledby="a-title">
+  <form class="sheet-in" id="addform" novalidate>
+    <h2 id="a-title">Add a document</h2>
+    <p class="hint" style="text-align:left">In Dropbox, tap Share, then Copy link, and paste it here. The link must be set so anyone with it can view.</p>
+    <div class="field"><label for="a-url">Dropbox link</label><input id="a-url" type="url" inputmode="url" autocomplete="off" placeholder="https://www.dropbox.com/scl/fi/…"><p class="err" id="a-url-err"></p></div>
+    <div class="field"><label for="a-name">Name in your wallet</label><input id="a-name" type="text" autocomplete="off" placeholder="Resume, Solar Specialist"><p class="err" id="a-name-err"></p></div>
+    <div class="field"><label for="a-cat">Category</label><select id="a-cat"><option>Resumes</option><option>Cover letters</option><option>Certificates</option><option>Other</option></select></div>
+    <div class="actions"><button class="btn" type="button" id="a-cancel">Cancel</button><button class="btn primary" type="submit">Add to wallet</button></div>
+  </form>
 </div>
 
 <div class="sheet" id="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="s-name">
@@ -157,12 +175,17 @@ const docs=[
  {n:"GPRO Green Building certificate",f:"GPRO_Certificate_Getting_Started_with_Green_Building.pdf",t:"PDF",b:301737,d:"2026-06-20",c:"Certificates",k:"dm9vyqsucae0i3flt7b8o",u:D+"dm9vyqsucae0i3flt7b8o/GPRO_Certificate_Getting_Started_with_Green_Building.pdf?rlkey=qnqzy2vp9nunrloaduoqktqy6&dl=0"},
  {n:"CPR card",f:"CPRCard.pdf",t:"PDF",b:291310,d:"2024-08-28",c:"Certificates",k:"1eihhrwziqxlxh9ybtdy8",u:D+"1eihhrwziqxlxh9ybtdy8/CPRCard.pdf?rlkey=1slm8f6cr18vt0zis729oyy8s&dl=0"}
 ];
-const cats=["All","Resumes","Cover letters","Certificates"];
+const cats=["All","Resumes","Cover letters","Certificates","Other"];
+const LA="resi-added";
+let added=[];
+try{const v=JSON.parse(localStorage.getItem(LA)||"[]");if(Array.isArray(v))added=v.filter(d=>d&&d.k&&d.u&&d.n);}catch(e){}
+docs.push(...added);
+function saveAdded(){try{localStorage.setItem(LA,JSON.stringify(added));return true;}catch(e){return false;}}
 let cat="All",q="",manage=false,hidden=new Set(),store=null,saving=Promise.resolve();
 const LS="resi-hidden";
 try{const v=JSON.parse(localStorage.getItem(LS)||"[]");if(Array.isArray(v))hidden=new Set(v);}catch(e){}
 const $=id=>document.getElementById(id);
-const kb=b=>b<1024*1024?Math.max(1,Math.round(b/1024))+" KB":(b/1048576).toFixed(1)+" MB";
+const kb=b=>!b?"Size unknown":b<1024*1024?Math.max(1,Math.round(b/1024))+" KB":(b/1048576).toFixed(1)+" MB";
 const dt=s=>new Date(s+"T12:00:00").toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"});
 function qr(el,text){try{const c=qrcode(0,"M");c.addData(text);c.make();el.innerHTML=c.createSvgTag({cellSize:4,margin:0,scalable:true});}catch(e){el.textContent="QR unavailable";}}
 cats.forEach(c=>{const b=document.createElement("button");b.className="chip";b.type="button";b.textContent=c;b.id="chip-"+c.replace(/\s/g,"");
@@ -180,11 +203,15 @@ function row(d,list){
  const r=document.createElement("div");r.className="row"+(off?" off":"");
  r.innerHTML='<div class="info"><p class="name"></p><p class="meta"><span class="badge"></span><span class="sz"></span><span class="dt"></span></p></div>';
  r.querySelector(".name").textContent=d.n;r.querySelector(".badge").textContent=d.t;
- r.querySelector(".sz").textContent=kb(d.b);r.querySelector(".dt").textContent=dt(d.d);
+ r.querySelector(".sz").textContent=d.mine?"Added by you":kb(d.b);r.querySelector(".dt").textContent=dt(d.d);
  if(manage){
   const t=document.createElement("button");t.type="button";t.className="toggle"+(off?" show":"");
   t.textContent=off?"Show":"Hide";t.setAttribute("aria-label",(off?"Show ":"Hide ")+d.n);
   t.onclick=()=>setHidden(d.k,!off);r.appendChild(t);
+  if(d.mine){const x=document.createElement("button");x.type="button";x.className="toggle remove";x.textContent="Remove";
+   x.setAttribute("aria-label","Remove "+d.n+" from your wallet");
+   x.onclick=()=>{if(x.dataset.sure){added=added.filter(a=>a.k!==d.k);const i=docs.indexOf(d);if(i>=0)docs.splice(i,1);hidden.delete(d.k);saveAdded();render();}else{x.dataset.sure="1";x.textContent="Tap again";}};
+   r.appendChild(x);}
  }else{
   const b=document.createElement("button");b.type="button";b.className="qbtn";b.setAttribute("aria-label","Show large QR code for "+d.n);
   r.appendChild(b);qr(b,d.u);b.onclick=()=>open(d,b);
@@ -210,9 +237,32 @@ function render(){
   hiddenShown.forEach(d=>row(d,list));
  }
 }
+function openAdd(){$("addform").reset();["a-url-err","a-name-err"].forEach(i=>$(i).textContent="");$("addsheet").hidden=false;document.body.style.overflow="hidden";$("a-url").focus();}
+function closeAdd(){$("addsheet").hidden=true;document.body.style.overflow="";$("add").focus();}
+$("add").onclick=openAdd;$("a-cancel").onclick=closeAdd;
+$("a-url").addEventListener("input",()=>$("a-url-err").textContent="");
+$("a-name").addEventListener("input",()=>$("a-name-err").textContent="");
+$("addform").addEventListener("submit",e=>{
+ e.preventDefault();
+ const raw=$("a-url").value.trim(),name=$("a-name").value.trim();let ok=true,u=null;
+ try{u=new URL(raw);if(!/^https?:$/.test(u.protocol))u=null;}catch(err){u=null;}
+ if(!raw){$("a-url-err").textContent="Paste the document's link first.";ok=false;}
+ else if(!u){$("a-url-err").textContent="That isn't a web link. It should start with https://";ok=false;}
+ else if(docs.some(d=>d.u===u.href)){$("a-url-err").textContent="That document is already in your wallet.";ok=false;}
+ if(!name){$("a-name-err").textContent="Give it a name so you can find it.";ok=false;}
+ if(!ok)return;
+ const path=decodeURIComponent(u.pathname.split("/").pop()||"");
+ const ext=(path.split(".").pop()||"").toLowerCase();
+ const t=ext==="pdf"?"PDF":(ext==="docx"||ext==="doc")?"DOCX":"LINK";
+ const d={n:name,f:path||u.hostname,t,d:new Date().toISOString().slice(0,10),c:$("a-cat").value,k:"u"+Date.now().toString(36),u:u.href,mine:true};
+ added.push(d);docs.push(d);
+ if(!saveAdded()){added.pop();docs.pop();$("a-url-err").textContent="Your phone wouldn't let the app save. Check that you're not in a private tab.";return;}
+ closeAdd();cat="All";document.querySelectorAll(".chip").forEach(x=>x.setAttribute("aria-pressed",x.textContent==="All"));render();
+});
+document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!$("addsheet").hidden)closeAdd();});
 let lastBtn=null,lock=null;
 async function open(d,btn){
- lastBtn=btn;$("s-name").textContent=d.n;$("s-file").textContent=d.f;$("s-type").textContent=d.t==="PDF"?"PDF document":"Word document (.docx)";
+ lastBtn=btn;$("s-name").textContent=d.n;$("s-file").textContent=d.f;$("s-type").textContent=d.t==="PDF"?"PDF document":d.t==="DOCX"?"Word document (.docx)":"Link";
  $("s-size").textContent=kb(d.b);$("s-date").textContent=dt(d.d);$("s-cat").textContent=d.c;$("s-open").href=d.u;$("s-toast").textContent="";
  $("s-copy").onclick=async()=>{try{await navigator.clipboard.writeText(d.u);$("s-toast").textContent="Link copied";}catch(e){$("s-toast").textContent=d.u;}};
  qr($("s-qr"),d.u);$("sheet").hidden=false;document.body.style.overflow="hidden";$("s-close").focus();
